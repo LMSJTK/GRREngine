@@ -1,7 +1,10 @@
 import { TileRenderer } from '../tiles/TileRenderer.js';
+import { EntityPlacer } from './EntityPlacer.js';
+import { PrefabManager } from './PrefabManager.js';
+import { SpriteImporter } from './SpriteImporter.js';
 
 /**
- * Map Editor - handles tile painting, erasing, entity placement.
+ * Map Editor - handles tile painting, erasing, entity placement, and selection.
  * The editor takes over input when in edit mode.
  */
 export class Editor {
@@ -9,31 +12,37 @@ export class Editor {
     this.engine = engine;
     this.active = true;
 
-    // Tools
-    this.currentTool = 'paint'; // paint, erase, entity, select
+    // Tools: paint, erase, entity
+    this.currentTool = 'paint';
     this.currentLayer = 'ground';
     this.selectedTileId = 0;
     this.showGrid = true;
+
+    // Entity system
+    this.entityPlacer = new EntityPlacer(engine);
+    this.prefabManager = new PrefabManager();
+    this.spriteImporter = new SpriteImporter(engine);
 
     // Panning state
     this._isPanning = false;
     this._lastPanX = 0;
     this._lastPanY = 0;
 
-    // Undo history
+    // Undo history (stores both tiles + entities)
     this._history = [];
     this._historyIndex = -1;
     this._currentAction = null;
   }
 
-  /** Push current map state to undo history */
+  /** Push current state (tiles + entities) to undo history */
   _pushHistory() {
-    const snapshot = JSON.stringify(this.engine.tileMap.serialize());
-    // Trim any redo states
+    const snapshot = JSON.stringify({
+      map: this.engine.tileMap.serialize(),
+      entities: this.entityPlacer.getSnapshot(),
+    });
     this._history = this._history.slice(0, this._historyIndex + 1);
     this._history.push(snapshot);
     this._historyIndex = this._history.length - 1;
-    // Limit history size
     if (this._history.length > 50) {
       this._history.shift();
       this._historyIndex--;
@@ -43,16 +52,22 @@ export class Editor {
   undo() {
     if (this._historyIndex > 0) {
       this._historyIndex--;
-      const data = JSON.parse(this._history[this._historyIndex]);
-      this._restoreMap(data);
+      this._restoreSnapshot(this._history[this._historyIndex]);
     }
   }
 
   redo() {
     if (this._historyIndex < this._history.length - 1) {
       this._historyIndex++;
-      const data = JSON.parse(this._history[this._historyIndex]);
-      this._restoreMap(data);
+      this._restoreSnapshot(this._history[this._historyIndex]);
+    }
+  }
+
+  _restoreSnapshot(snapshotStr) {
+    const snapshot = JSON.parse(snapshotStr);
+    this._restoreMap(snapshot.map);
+    if (snapshot.entities) {
+      this.entityPlacer.restoreSnapshot(snapshot.entities);
     }
   }
 
@@ -65,7 +80,6 @@ export class Editor {
     map.layers.overhead = data.layers.overhead;
   }
 
-  /** Initialize undo with current state */
   initHistory() {
     this._history = [];
     this._historyIndex = -1;
@@ -75,16 +89,14 @@ export class Editor {
   update(dt) {
     if (!this.active) return;
 
-    const { input, camera, renderer, tileMap } = this.engine;
+    const { input, camera, renderer } = this.engine;
     input.updateWorldMouse(camera, renderer);
 
-    // Zoom with scroll wheel
+    // Zoom
     const wheel = input.getWheelDelta();
-    if (wheel !== 0) {
-      camera.adjustZoom(wheel);
-    }
+    if (wheel !== 0) camera.adjustZoom(wheel);
 
-    // Pan with middle mouse or right mouse
+    // Pan with middle/right mouse
     if (input.mousePressed(1) || input.mousePressed(2)) {
       this._isPanning = true;
       this._lastPanX = input.mouse.x;
@@ -106,46 +118,63 @@ export class Editor {
     if (input.keyPressed('Digit1')) this.currentLayer = 'ground';
     if (input.keyPressed('Digit2')) this.currentLayer = 'detail';
     if (input.keyPressed('Digit3')) this.currentLayer = 'overhead';
-    if (input.keyPressed('KeyB')) this.currentTool = 'paint';
-    if (input.keyPressed('KeyE')) this.currentTool = 'erase';
+    if (input.keyPressed('KeyB')) this.setTool('paint');
+    if (input.keyPressed('KeyE')) this.setTool('erase');
+    if (input.keyPressed('KeyN')) this.setTool('entity');
 
-    // Undo/redo
-    if ((input.keyDown('ControlLeft') || input.keyDown('ControlRight') || input.keyDown('MetaLeft') || input.keyDown('MetaRight'))) {
-      if (input.keyPressed('KeyZ')) {
-        if (input.keyDown('ShiftLeft') || input.keyDown('ShiftRight')) {
-          this.redo();
-        } else {
-          this.undo();
+    // Delete selected entity
+    if (this.currentTool === 'entity') {
+      if (input.keyPressed('Delete') || input.keyPressed('Backspace')) {
+        if (this.entityPlacer.selectedEntity) {
+          this.entityPlacer.deleteSelected();
+          this._pushHistory();
         }
       }
     }
 
-    // Paint/erase with left mouse (only if not over UI)
-    if (input.mouseDown(0) && !this._isPanning) {
-      this._handlePaint();
-    }
-    if (input.mouseReleased(0) && this._currentAction) {
-      this._pushHistory();
-      this._currentAction = null;
+    // Undo/redo
+    const ctrl = input.keyDown('ControlLeft') || input.keyDown('ControlRight') ||
+      input.keyDown('MetaLeft') || input.keyDown('MetaRight');
+    if (ctrl && input.keyPressed('KeyZ')) {
+      if (input.keyDown('ShiftLeft') || input.keyDown('ShiftRight')) {
+        this.redo();
+      } else {
+        this.undo();
+      }
     }
 
-    // Keyboard-based camera movement for editor
+    // Left mouse interactions
+    if (!this._isPanning) {
+      if (this.currentTool === 'paint' || this.currentTool === 'erase') {
+        if (input.mouseDown(0)) this._handlePaint();
+        if (input.mouseReleased(0) && this._currentAction) {
+          this._pushHistory();
+          this._currentAction = null;
+        }
+      } else if (this.currentTool === 'entity') {
+        this._handleEntityInput();
+      }
+    }
+
+    // Keyboard-based camera pan
     const panSpeed = 200 / camera.zoom;
     if (input.keyDown('ArrowLeft') || input.keyDown('KeyA')) camera.x -= panSpeed * dt;
     if (input.keyDown('ArrowRight') || input.keyDown('KeyD')) camera.x += panSpeed * dt;
     if (input.keyDown('ArrowUp') || input.keyDown('KeyW')) camera.y -= panSpeed * dt;
     if (input.keyDown('ArrowDown') || input.keyDown('KeyS')) camera.y += panSpeed * dt;
+
+    // Update entity drag
+    if (this.entityPlacer.isDragging) {
+      this.entityPlacer.updateDrag(input.mouse.worldX, input.mouse.worldY);
+    }
   }
 
   _handlePaint() {
     const { input, tileMap } = this.engine;
     const { col, row } = tileMap.worldToTile(input.mouse.worldX, input.mouse.worldY);
-
     if (col < 0 || col >= tileMap.width || row < 0 || row >= tileMap.height) return;
 
-    if (!this._currentAction) {
-      this._currentAction = true;
-    }
+    if (!this._currentAction) this._currentAction = true;
 
     if (this.currentTool === 'paint') {
       tileMap.setTile(this.currentLayer, col, row, this.selectedTileId);
@@ -155,36 +184,90 @@ export class Editor {
     }
   }
 
+  _handleEntityInput() {
+    const { input } = this.engine;
+    const wx = input.mouse.worldX;
+    const wy = input.mouse.worldY;
+
+    if (input.mousePressed(0)) {
+      const result = this.entityPlacer.handleMouseDown(wx, wy);
+      if (result === 'miss') {
+        // Place new entity (use pending prefab props if available)
+        const prefabProps = this.entityPlacer._pendingPrefabProps || null;
+        const placed = this.entityPlacer.place(wx, wy, this.entityPlacer.selectedType, prefabProps);
+        if (placed) {
+          this.entityPlacer.select(placed);
+          this._pushHistory();
+        }
+        // Clear pending prefab props after use
+        this.entityPlacer._pendingPrefabProps = null;
+      }
+    }
+
+    if (input.mouseReleased(0)) {
+      const result = this.entityPlacer.handleMouseUp(wx, wy);
+      if (result === 'moved') {
+        this._pushHistory();
+      }
+    }
+  }
+
+  /** Set current tool and notify UI */
+  setTool(tool) {
+    this.currentTool = tool;
+    if (tool !== 'entity') {
+      this.entityPlacer.deselect();
+    }
+    if (this.onToolChange) this.onToolChange(tool);
+  }
+
+  /** Callback for UI synchronization */
+  onToolChange = null;
+
   render(renderer, camera) {
     if (!this.active) return;
-    const { tileMap, tileSet } = this.engine;
+    const { tileMap, tileSet, assets } = this.engine;
 
-    // Draw all tile layers
+    // Draw tile layers
     TileRenderer.drawBelow(renderer, camera, tileMap, tileSet);
     TileRenderer.drawAbove(renderer, camera, tileMap, tileSet);
 
+    // Draw placed entities
+    this.entityPlacer.render(renderer, camera, assets);
+
     // Draw grid
-    if (this.showGrid) {
-      renderer.drawGrid(camera, tileMap.tileSize);
-    }
+    if (this.showGrid) renderer.drawGrid(camera, tileMap.tileSize);
 
     // Draw map border
     renderer.drawRect(0, 0, tileMap.pixelWidth, tileMap.pixelHeight, 'rgba(255,255,0,0.3)', false);
 
-    // Highlight tile under cursor
-    const { input } = this.engine;
-    const { col, row } = tileMap.worldToTile(input.mouse.worldX, input.mouse.worldY);
-    if (col >= 0 && col < tileMap.width && row >= 0 && row < tileMap.height) {
+    // Highlight tile under cursor (only in tile tools)
+    if (this.currentTool === 'paint' || this.currentTool === 'erase') {
+      const { input } = this.engine;
+      const { col, row } = tileMap.worldToTile(input.mouse.worldX, input.mouse.worldY);
+      if (col >= 0 && col < tileMap.width && row >= 0 && row < tileMap.height) {
+        const ts = tileMap.tileSize;
+        renderer.drawRect(col * ts, row * ts, ts, ts, 'rgba(255,255,255,0.4)', false);
+      }
+    }
+
+    // Entity placement preview (ghost)
+    if (this.currentTool === 'entity' && !this.entityPlacer.isDragging && !this.entityPlacer.selectedEntity) {
+      const { input } = this.engine;
       const ts = tileMap.tileSize;
-      renderer.drawRect(col * ts, row * ts, ts, ts, 'rgba(255,255,255,0.4)', false);
+      const gx = Math.floor(input.mouse.worldX / ts) * ts;
+      const gy = Math.floor(input.mouse.worldY / ts) * ts;
+      renderer.drawRect(gx, gy, ts, ts, 'rgba(100,200,255,0.3)');
+      renderer.drawRect(gx, gy, ts, ts, 'rgba(100,200,255,0.6)', false);
     }
   }
 
-  /** Save map to JSON and trigger download */
+  /** Save map + entities to JSON download */
   saveMap() {
     const data = {
       map: this.engine.tileMap.serialize(),
-      entities: this.engine.world.serialize(),
+      entities: this.entityPlacer.serialize(),
+      prefabs: this.prefabManager.serialize(),
     };
     const json = JSON.stringify(data, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
@@ -196,16 +279,16 @@ export class Editor {
     URL.revokeObjectURL(url);
   }
 
-  /** Load map from JSON file */
+  /** Load map + entities from JSON file */
   loadMap(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
-        if (data.map) {
-          this._restoreMap(data.map);
-          this.initHistory();
-        }
+        if (data.map) this._restoreMap(data.map);
+        if (data.entities) this.entityPlacer.deserialize(data.entities);
+        if (data.prefabs) this.prefabManager.deserialize(data.prefabs);
+        this.initHistory();
       } catch (err) {
         console.error('Failed to load map:', err);
       }
