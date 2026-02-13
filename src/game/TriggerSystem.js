@@ -94,11 +94,18 @@ export class TriggerSystem {
         // Pick up item
         const name = item._itemName || 'Item';
         const value = item._itemValue || 1;
+        const itemType = item._itemType || 'pickup';
         this.engine.gameState.addItem(name, 1);
         this.engine.gameState.addVar('score', value);
-        this.engine.dialogText = `Picked up ${name}!`;
-        this.engine.dialogTimer = 1.5;
-        item.active = false; // remove from world
+
+        // Consumable hearts restore HP
+        if (itemType === 'consumable' && name.toLowerCase().includes('heart')) {
+          this.engine.combatSystem.healPlayer(2);
+        }
+
+        // Show notification via HUD
+        this.engine.hud.notify(`Picked up ${name}!`, '#ffdd66');
+        item.active = false;
       }
     }
   }

@@ -83,6 +83,7 @@ export class Player extends Entity {
   }
 
   render(renderer) {
+    if (this._renderSkip) return; // invincibility blink
     this.sprite.render(renderer);
   }
 

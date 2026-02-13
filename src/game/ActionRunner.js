@@ -178,6 +178,49 @@ export class ActionRunner {
         return 'done';
       }
 
+      case 'heal_player': {
+        if (this.engine.combatSystem) {
+          this.engine.combatSystem.healPlayer(p.amount || 2);
+        }
+        return 'done';
+      }
+
+      case 'damage_player': {
+        if (this.engine.combatSystem) {
+          this.engine.combatSystem.damagePlayer(p.amount || 1);
+        }
+        return 'done';
+      }
+
+      case 'set_max_hp': {
+        const newMax = p.value || 6;
+        this.engine.gameState.setVar('maxHp', newMax);
+        // Clamp current HP
+        const curHP = this.engine.gameState.getVar('hp', 6);
+        if (curHP > newMax) this.engine.gameState.setVar('hp', newMax);
+        return 'done';
+      }
+
+      case 'set_attack': {
+        this.engine.gameState.setVar('attack', p.value || 1);
+        return 'done';
+      }
+
+      case 'screen_fade': {
+        const transition = this.engine.screenTransition;
+        if (transition) {
+          const dur = p.duration || 0.5;
+          if (p.direction === 'in') {
+            transition.fadeIn(dur);
+          } else {
+            transition.fadeOut(dur);
+          }
+          this._waitTimer = dur;
+          return 'wait';
+        }
+        return 'done';
+      }
+
       default:
         console.warn(`Unknown action type: ${action.type}`);
         return 'done';
