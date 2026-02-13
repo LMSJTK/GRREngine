@@ -1,0 +1,7 @@
+services:
+  grrengine:
+    build: .
+    container_name: grrengine-app
+    ports:
+      - "8080:80"
+    restart: unless-stopped
