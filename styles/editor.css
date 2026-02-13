@@ -35,6 +35,10 @@ body {
   cursor: crosshair;
 }
 
+#game-canvas.play-mode {
+  cursor: default;
+}
+
 /* ---- Editor sidebar ---- */
 #editor-ui {
   width: 240px;

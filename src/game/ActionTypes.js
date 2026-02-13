@@ -7,6 +7,7 @@ export const ACTION_CATEGORIES = {
   dialog: { label: 'Dialog', color: '#4a90d0' },
   logic: { label: 'Logic', color: '#d0a040' },
   game: { label: 'Game', color: '#40b060' },
+  combat: { label: 'Combat', color: '#d04040' },
   flow: { label: 'Flow', color: '#b04080' },
   cutscene: { label: 'Cutscene', color: '#a060c0' },
 };
@@ -129,6 +130,47 @@ export const ACTION_TYPES = {
     category: 'game',
     desc: 'Remove the entity that triggered this action',
     params: [],
+  },
+  heal_player: {
+    name: 'Heal Player',
+    category: 'combat',
+    desc: 'Restore player health',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', default: 2, min: 1, max: 99 },
+    ],
+  },
+  damage_player: {
+    name: 'Damage Player',
+    category: 'combat',
+    desc: 'Deal damage to the player',
+    params: [
+      { key: 'amount', label: 'Damage', type: 'number', default: 1, min: 1, max: 99 },
+    ],
+  },
+  set_max_hp: {
+    name: 'Set Max HP',
+    category: 'combat',
+    desc: 'Change the player max health',
+    params: [
+      { key: 'value', label: 'Max HP', type: 'number', default: 6, min: 2, max: 20 },
+    ],
+  },
+  set_attack: {
+    name: 'Set Attack Power',
+    category: 'combat',
+    desc: 'Change the player attack damage',
+    params: [
+      { key: 'value', label: 'Attack', type: 'number', default: 1, min: 1, max: 99 },
+    ],
+  },
+  screen_fade: {
+    name: 'Screen Fade',
+    category: 'cutscene',
+    desc: 'Fade screen to/from black',
+    params: [
+      { key: 'direction', label: 'Direction', type: 'string', default: 'out' },
+      { key: 'duration', label: 'Duration (s)', type: 'number', default: 0.5, min: 0.1, max: 5 },
+    ],
   },
 };
 

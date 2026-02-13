@@ -20,6 +20,9 @@ import { GameState } from '../game/GameState.js';
 import { ActionRunner } from '../game/ActionRunner.js';
 import { TriggerSystem } from '../game/TriggerSystem.js';
 import { BehaviorSystem } from '../game/BehaviorSystem.js';
+import { CombatSystem } from '../game/CombatSystem.js';
+import { HUD } from '../game/HUD.js';
+import { ScreenTransition } from '../game/ScreenTransition.js';
 
 /**
  * GRREngine - main engine class that ties all systems together.
@@ -60,6 +63,19 @@ export class Engine {
 
     // Behavior system (enemy AI)
     this.behaviorSystem = new BehaviorSystem();
+
+    // Combat system (attacks, damage, knockback)
+    this.combatSystem = new CombatSystem(this);
+
+    // HUD (hearts, score, dialog, notifications)
+    this.hud = new HUD(this);
+
+    // Screen transitions (fade, death screen)
+    this.screenTransition = new ScreenTransition();
+    this.screenTransition.setEngine(this);
+
+    // Death state
+    this._isDead = false;
 
     // Editor
     this.editor = new Editor(this);
@@ -187,11 +203,33 @@ export class Engine {
       onDefeat: [],
     });
 
+    placer.place(15 * 16, 20 * 16, 'enemy', {
+      enemyName: 'Red Slime',
+      health: 5,
+      damage: 2,
+      behavior: 'chase',
+      direction: 'down',
+      spriteVariant: 'enemy_slime',
+      wanderRadius: 48,
+      chaseRadius: 96,
+      patrolDistance: 64,
+      onDefeat: [
+        { type: 'show_dialog', params: { text: 'The Red Slime has been defeated!', duration: 2 } },
+      ],
+    });
+
     placer.place(22 * 16, 15 * 16, 'item', {
       itemName: 'Gold Coin',
       itemType: 'pickup',
       value: 10,
       spriteVariant: 'item_coin',
+    });
+
+    placer.place(6 * 16, 6 * 16, 'item', {
+      itemName: 'Heart',
+      itemType: 'consumable',
+      value: 0,
+      spriteVariant: 'item_heart',
     });
 
     // Demo trigger zone near the pond
@@ -218,6 +256,16 @@ export class Engine {
       this.actionRunner.running = false;
       this.triggerSystem.reset();
       this.behaviorSystem.reset();
+      this.combatSystem.reset();
+      this.hud.reset();
+      this.screenTransition.reset();
+      this._isDead = false;
+
+      // Initialize player stats
+      this.gameState.setVar('hp', 6);
+      this.gameState.setVar('maxHp', 6);
+      this.gameState.setVar('attack', 1);
+      this.gameState.setVar('defense', 0);
 
       // Find spawn point
       const spawnEntity = this.editor.entityPlacer.entities.find((e) => e.type === 'spawn');
@@ -239,18 +287,25 @@ export class Engine {
 
       this.editor.active = false;
       if (this.editorUI) this.editorUI.setVisible(false);
+      this.canvas.classList.add('play-mode');
+
+      // Fade in from black
+      this.screenTransition.fadeIn(0.4);
     } else {
       this.camera.target = null;
       this.camera._panTarget = null;
       this.camera.clearBounds();
       this.editor.active = true;
       if (this.editorUI) this.editorUI.setVisible(true);
+      this.screenTransition.reset();
+      this.canvas.classList.remove('play-mode');
 
       if (this.player) {
         this.world.remove(this.player);
         this.player = null;
       }
       this.dialogText = null;
+      this._isDead = false;
       this.world.clear();
     }
   }
@@ -302,14 +357,41 @@ export class Engine {
               const row = dirMap[enemy._direction] || 0;
               const frame = enemy._animFrame;
               const fw = 16;
-              // sprite may have 2+ columns for animation
               const cols = Math.floor(enemy._sprite.width / fw);
               const col = cols > 1 ? frame % cols : 0;
-              renderer.drawImageRegion(
-                enemy._sprite,
-                col * fw, row * fw, fw, fw,
-                enemy.x, enemy.y, fw, fw
-              );
+
+              // Flash white when hit
+              if (this.combatSystem.isEnemyFlashing(enemy.id)) {
+                renderer.ctx.save();
+                renderer.ctx.globalCompositeOperation = 'source-over';
+                renderer.drawImageRegion(
+                  enemy._sprite,
+                  col * fw, row * fw, fw, fw,
+                  enemy.x, enemy.y, fw, fw
+                );
+                renderer.ctx.globalCompositeOperation = 'source-atop';
+                renderer.drawRect(enemy.x, enemy.y, fw, fw, 'rgba(255,255,255,0.7)');
+                renderer.ctx.globalCompositeOperation = 'source-over';
+                renderer.ctx.restore();
+              } else {
+                renderer.drawImageRegion(
+                  enemy._sprite,
+                  col * fw, row * fw, fw, fw,
+                  enemy.x, enemy.y, fw, fw
+                );
+              }
+
+              // Health bar above enemy if damaged
+              if (enemy._health < (editorEntity.properties.health || 3)) {
+                const maxH = editorEntity.properties.health || 3;
+                const pct = Math.max(0, enemy._health / maxH);
+                const barW = 14;
+                const barH = 2;
+                const bx = enemy.x + (fw - barW) / 2;
+                const by = enemy.y - 4;
+                renderer.drawRect(bx, by, barW, barH, 'rgba(0,0,0,0.5)');
+                renderer.drawRect(bx, by, barW * pct, barH, pct > 0.3 ? '#40c040' : '#c04040');
+              }
             };
             enemy.update = (dt) => {
               enemy._animTimer += dt;
@@ -331,6 +413,7 @@ export class Engine {
             item.type = 'item';
             item._sprite = sprite;
             item._itemName = editorEntity.properties.itemName || 'Item';
+            item._itemType = editorEntity.properties.itemType || 'pickup';
             item._itemValue = editorEntity.properties.value || 1;
             item._bobTimer = Math.random() * Math.PI * 2; // randomize start
             item.update = (dt) => {
@@ -372,19 +455,51 @@ export class Engine {
   }
 
   _updatePlay(dt) {
+    // Screen transition
+    this.screenTransition.update(dt);
+
+    // Death screen — wait for respawn input
+    if (this._isDead) {
+      if (this.screenTransition.isDeathReady && this.input.keyPressed('Space')) {
+        this._respawn();
+      }
+      // Still allow escape to editor during death
+      if (this.input.keyPressed('Escape')) {
+        this._returnToEditor();
+      }
+      return;
+    }
+
+    // HUD notifications
+    this.hud.update(dt);
+
     // Action runner (scripts)
     this.actionRunner.update(dt);
 
-    // Player input (respect input lock from scripts)
-    if (this.player && !this.actionRunner.isInputLocked) {
+    // Combat system (attack timers, knockback, contact damage)
+    this.combatSystem.update(dt);
+
+    // Player input (respect input lock from scripts and knockback)
+    const playerCanMove = this.player
+      && !this.actionRunner.isInputLocked
+      && !this.combatSystem._playerKnockback;
+
+    if (playerCanMove) {
       this.player.handleInput(this.input);
       this.player.moveWithCollision(dt, this.tileMap);
       this.player.update(dt);
+
+      // Attack input (J key or left click)
+      if (this.input.keyPressed('KeyJ')) {
+        this.combatSystem.tryAttack();
+      }
     } else if (this.player) {
-      // Locked: still update animation but don't move
-      this.player.vx = 0;
-      this.player.vy = 0;
-      this.player.moving = false;
+      // Locked/knockback: still update animation but don't accept input
+      if (!this.combatSystem._playerKnockback) {
+        this.player.vx = 0;
+        this.player.vy = 0;
+        this.player.moving = false;
+      }
       this.player.update(dt);
     }
 
@@ -397,7 +512,7 @@ export class Engine {
     // Trigger system (zone detection, item pickup)
     this.triggerSystem.update(dt);
 
-    // NPC interaction
+    // NPC interaction (Space/E)
     if (!this.actionRunner.running && !this.actionRunner.isInputLocked) {
       if (this.input.keyPressed('Space') || this.input.keyPressed('KeyE')) {
         // First check on_interact triggers
@@ -410,7 +525,6 @@ export class Engine {
             if (npc.isPlayerNear(this.player)) {
               npc.faceToward(this.player);
 
-              // If NPC has a script, run it instead of dialog
               if (npc._onInteract && npc._onInteract.length > 0) {
                 this.actionRunner.run(npc._onInteract);
               } else {
@@ -434,12 +548,54 @@ export class Engine {
 
     // Return to editor
     if (this.input.keyPressed('Escape')) {
-      this.setMode('edit');
-      const editBtn = document.getElementById('btn-edit-mode');
-      const playBtn = document.getElementById('btn-play-mode');
-      if (editBtn) editBtn.classList.add('active');
-      if (playBtn) playBtn.classList.remove('active');
+      this._returnToEditor();
     }
+  }
+
+  /** Called by CombatSystem when player HP reaches 0 */
+  onPlayerDeath() {
+    if (this._isDead) return;
+    this._isDead = true;
+    this.screenTransition.showDeath();
+  }
+
+  /** Respawn player after death */
+  _respawn() {
+    this.screenTransition.fadeThrough(0.8, () => {
+      // Reset state at midpoint (screen is black)
+      this._isDead = false;
+      this.world.clear();
+      this.combatSystem.reset();
+      this.hud.reset();
+
+      // Restore HP
+      const maxHp = this.gameState.getVar('maxHp', 6);
+      this.gameState.setVar('hp', maxHp);
+
+      // Find spawn and recreate player
+      const spawnEntity = this.editor.entityPlacer.entities.find((e) => e.type === 'spawn');
+      const spawnX = spawnEntity ? spawnEntity.x : 20 * 16;
+      const spawnY = spawnEntity ? spawnEntity.y : 17 * 16;
+
+      const playerSheet = this.assets.getImage('player_sprite');
+      this.player = new Player(spawnX, spawnY, playerSheet);
+      this.world.add(this.player);
+
+      this._instantiateEntities();
+
+      this.camera.follow(this.player, 0.15);
+      this.dialogText = null;
+      this.triggerSystem.reset();
+      this.behaviorSystem.reset();
+    });
+  }
+
+  _returnToEditor() {
+    this.setMode('edit');
+    const editBtn = document.getElementById('btn-edit-mode');
+    const playBtn = document.getElementById('btn-play-mode');
+    if (editBtn) editBtn.classList.add('active');
+    if (playBtn) playBtn.classList.remove('active');
   }
 
   _render(alpha) {
@@ -450,14 +606,37 @@ export class Engine {
       this.editor.render(this.renderer, this.camera);
     } else if (this.mode === 'play') {
       TileRenderer.drawBelow(this.renderer, this.camera, this.tileMap, this.tileSet);
+
+      // Player invincibility flash (blink effect)
+      if (this.player && this.combatSystem.isPlayerInvincible) {
+        const blink = Math.floor(this._playerInvTimer() * 10) % 2 === 0;
+        if (!blink) {
+          this.player._renderSkip = true;
+        }
+      }
+
       this.world.render(this.renderer);
+
+      // Restore render skip flag
+      if (this.player) this.player._renderSkip = false;
+
+      // Combat world effects (attack slash)
+      this.combatSystem.renderWorld(this.renderer);
+
       TileRenderer.drawAbove(this.renderer, this.camera, this.tileMap, this.tileSet);
     }
 
     this.renderer.restoreCamera();
 
     if (this.mode === 'play') {
-      this._renderPlayHUD();
+      // Floating damage numbers (screen space)
+      this.combatSystem.renderDamageNumbers(this.renderer, this.camera);
+
+      // HUD (hearts, score, inventory, dialog, controls)
+      this.hud.render(this.renderer);
+
+      // Screen transition overlay (fade, death)
+      this.screenTransition.render(this.renderer);
     }
 
     if (this.mode === 'edit' && this.editorUI) {
@@ -467,48 +646,8 @@ export class Engine {
     this.input.endFrame();
   }
 
-  _renderPlayHUD() {
-    // FPS
-    this.renderer.drawText(
-      `FPS: ${this.gameLoop.fps}`,
-      this.renderer.width - 10, 10,
-      { color: 'rgba(255,255,255,0.5)', font: '12px monospace', align: 'right' }
-    );
-
-    // Game state display (score, flags)
-    const score = this.gameState.getVar('score', 0);
-    const items = this.gameState.inventory;
-    if (score > 0 || items.length > 0) {
-      let statText = `Score: ${score}`;
-      if (items.length > 0) {
-        statText += ` | Items: ${items.map((i) => `${i.name}${i.amount > 1 ? ` x${i.amount}` : ''}`).join(', ')}`;
-      }
-      this.renderer.drawText(statText, 10, 10, {
-        color: 'rgba(255,255,200,0.8)',
-        font: '12px monospace',
-      });
-    }
-
-    // Dialog box
-    if (this.dialogText) {
-      const boxW = Math.min(400, this.renderer.width - 40);
-      const boxH = 60;
-      const boxX = (this.renderer.width - boxW) / 2;
-      const boxY = this.renderer.height - boxH - 20;
-
-      this.renderer.drawRect(boxX, boxY, boxW, boxH, 'rgba(0,0,0,0.85)');
-      this.renderer.drawRect(boxX, boxY, boxW, boxH, '#6688aa', false);
-      this.renderer.drawText(this.dialogText, boxX + 15, boxY + 15, {
-        color: '#ffffff',
-        font: '14px monospace',
-      });
-    }
-
-    // Controls hint
-    this.renderer.drawText(
-      'WASD: Move | Space: Interact | Esc: Editor',
-      this.renderer.width / 2, this.renderer.height - 8,
-      { color: 'rgba(255,255,255,0.3)', font: '11px monospace', align: 'center', baseline: 'bottom' }
-    );
+  /** Helper to get invincibility timer value for blink calculation */
+  _playerInvTimer() {
+    return this.combatSystem._playerInvincible;
   }
 }
