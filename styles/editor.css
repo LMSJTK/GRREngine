@@ -1,0 +1,285 @@
+/* GRREngine - Editor Styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #0d0d1a;
+  color: #ccc;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ---- Canvas area ---- */
+#canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+/* ---- Editor sidebar ---- */
+#editor-ui {
+  width: 220px;
+  background: #1a1a2e;
+  border-left: 1px solid #2a2a4a;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transition: width 0.2s ease, opacity 0.2s ease;
+}
+
+#editor-ui.play-mode {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  border: none;
+}
+
+/* ---- Toolbar ---- */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: #16162a;
+  border-bottom: 1px solid #2a2a4a;
+  flex-wrap: wrap;
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 4px;
+}
+
+.tool-btn {
+  width: 32px;
+  height: 32px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.tool-btn:hover {
+  background: #3a3a5a;
+}
+
+.tool-btn.active {
+  background: #4a6090;
+  border-color: #6a80b0;
+}
+
+.mode-group {
+  margin-left: auto;
+}
+
+.mode-btn {
+  padding: 4px 10px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mode-btn:hover {
+  background: #3a3a5a;
+}
+
+.mode-btn.active {
+  background: #408040;
+  border-color: #50a050;
+  color: #fff;
+}
+
+/* ---- Panel titles ---- */
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  padding: 10px 10px 6px;
+}
+
+/* ---- Tile palette ---- */
+.tile-palette {
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  padding: 6px 10px 10px;
+}
+
+.palette-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: #222240;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.palette-item:hover {
+  background: #2a2a50;
+  border-color: #4a4a7a;
+}
+
+.palette-item.selected {
+  border-color: #6a90d0;
+  background: #2a3a5a;
+}
+
+.palette-item canvas {
+  image-rendering: pixelated;
+  border-radius: 2px;
+}
+
+.palette-label {
+  font-size: 10px;
+  color: #999;
+  text-align: center;
+}
+
+/* ---- Layer panel ---- */
+.layer-panel {
+  border-bottom: 1px solid #2a2a4a;
+  padding-bottom: 8px;
+}
+
+.layer-btn {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 3px 10px;
+  padding: 5px 10px;
+  background: #222240;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.layer-btn:hover {
+  background: #2a2a50;
+}
+
+.layer-btn.active {
+  background: #3a4a6a;
+  border-color: #5a6a9a;
+  color: #fff;
+}
+
+/* ---- Map controls ---- */
+.map-controls {
+  border-bottom: 1px solid #2a2a4a;
+  padding-bottom: 10px;
+}
+
+.control-btn {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 3px 10px;
+  padding: 6px 10px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.control-btn:hover {
+  background: #3a3a5a;
+}
+
+.map-size-controls {
+  padding: 6px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.map-size-controls label {
+  font-size: 11px;
+  color: #999;
+}
+
+.map-size-controls input {
+  width: 50px;
+  padding: 3px 5px;
+  background: #222240;
+  border: 1px solid #3a3a5a;
+  border-radius: 3px;
+  color: #ccc;
+  font-size: 12px;
+}
+
+.map-size-controls .control-btn {
+  width: auto;
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* ---- Status bar ---- */
+.status-bar {
+  margin-top: auto;
+  padding: 6px 10px;
+  background: #16162a;
+  border-top: 1px solid #2a2a4a;
+  font-size: 11px;
+  color: #666;
+  font-family: monospace;
+}
+
+/* ---- Scrollbar styling ---- */
+#editor-ui::-webkit-scrollbar {
+  width: 6px;
+}
+
+#editor-ui::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+#editor-ui::-webkit-scrollbar-thumb {
+  background: #3a3a5a;
+  border-radius: 3px;
+}
