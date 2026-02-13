@@ -1,4 +1,5 @@
 import { getEntityType, ENTITY_CATEGORIES } from '../ecs/EntityTypes.js';
+import { ScriptEditor } from './ScriptEditor.js';
 
 /**
  * Property inspector panel - shows editable properties for a selected entity.
@@ -10,6 +11,7 @@ export class PropertyInspector {
     this.engine = engine;
     this.entity = null;
     this.onChange = null; // callback when a property changes
+    this._scriptEditors = [];
 
     this._panel = document.createElement('div');
     this._panel.className = 'property-inspector';
@@ -25,6 +27,7 @@ export class PropertyInspector {
       return;
     }
     this._panel.style.display = '';
+    this._destroyScriptEditors();
     this._render();
   }
 
@@ -159,6 +162,21 @@ export class PropertyInspector {
         wrapper.appendChild(input);
         break;
 
+      case 'actionlist': {
+        const actionsWrapper = document.createElement('div');
+        actionsWrapper.className = 'inspector-actions-wrapper';
+        wrapper.appendChild(actionsWrapper);
+
+        const editor = new ScriptEditor(actionsWrapper, (updatedActions) => {
+          entity.properties[prop.key] = updatedActions;
+          this._notifyChange();
+        });
+        editor.render(Array.isArray(value) ? value : []);
+        this._scriptEditors.push(editor);
+        this._panel.appendChild(wrapper);
+        return; // don't append twice
+      }
+
       case 'sprite': {
         input = document.createElement('select');
         input.className = 'inspector-input';
@@ -240,6 +258,13 @@ export class PropertyInspector {
 
   _notifyChange() {
     if (this.onChange) this.onChange(this.entity);
+  }
+
+  _destroyScriptEditors() {
+    for (const editor of this._scriptEditors) {
+      editor.destroy();
+    }
+    this._scriptEditors = [];
   }
 
   /** External hook for entity deletion */
